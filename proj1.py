@@ -7,10 +7,6 @@ filePath = '../Images/Hands/'
 files = utils.getListOfImageFilenames(filePath)
 outfile = '../CSV/HOGLarge.csv'
 
-"""
-plt.imshow(utils.downScaleImage(image))
-plt.show()
-"""
 
 data = []
 for file in files:
