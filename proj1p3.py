@@ -55,5 +55,3 @@ if display:
 	for image in similarImages:
 		plt.imshow(utils.getRGBImage(imagePath + image))
 		plt.show()
-else:
-	print(similarImages)
