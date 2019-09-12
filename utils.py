@@ -40,12 +40,18 @@ def getHOGFD(image):
 	#plt.show()
 	return fd
 
-#returns a flattened feature vector of size K x 128 where
+#returns a flattened feature vector of size K x 132 where
 #K is the number of keypoints found on the image
+#the first 4 elements of the fv are x, y, angle, scale
+#the next 128 elements are the histogram or oriented gradients
 def getSIFTFD(image, sift):
-		kp, des = sift.detectAndCompute(image,None)
-		#print(des.shape)
-		return des.flatten()
+	kp, des = sift.detectAndCompute(image,None)
+	keypoints = []
+	for i in range(len(kp)):
+		keypoints.extend([kp[i].pt[0], kp[i].pt[1], kp[i].angle, kp[i].size])
+		keypoints.extend(des[i])
+
+	return np.array(keypoints)
 
 
 def downScaleImage(image):
@@ -58,27 +64,65 @@ def writeToCSV(data, fileName):
 	    writer = csv.writer(File)
 	    writer.writerows(data)
 
-def compareTwoHOG(fd1, fd2):
-	l = fd1 - fd2
+def EuclideanDistance(v1, v2):
+	l = v1 - v2
 	l = np.square(l)
 	l = np.sum(l)
 	l = np.sqrt(l)
 	return l
 
+def compareTwoHOG(fd1, fd2):
+	return EuclideanDistance(fd1, fd2)
+
+def findDistanceBetweenTwoKeyPoints(kp1, kp2):
+	return EuclideanDistance(kp1, kp2)
+
+def getClosestMatches(kp, fd2, n):
+	mtx = fd2 - kp
+	mtx = np.square(mtx)
+	mtx = np.sum(mtx, axis=1)
+	mtx = np.sqrt(mtx)
+	matches = []
+	maximum = np.amax(mtx)
+	for i in range(n):
+		minimum = np.amin(mtx)
+		minIndex = np.where(mtx == np.amin(mtx))[0][0]
+		mtx[minIndex] = maximum		#this is so we can find the next lowest min
+		matches.append([minIndex, minimum])
+	return np.array(matches)
+
+#returns an array where each element is a set of n matches, 
+#each match having the list: [queryIdx, trainIdx, distance]
+def getKeypointMatches(fd1, fd2, n):
+	matches = []
+	for i in range(len(fd1)):
+		t = getClosestMatches(fd1[i], fd2, n) #t is a n x 2 matrix with trainIdx and distance as columns
+		iArr = np.array([i] * n)
+		t = np.c_[iArr, t]	#append a column of i to t so that the query index is included in the match
+		#print(t[0][0], t[0][1], t[0][2])
+		matches.append(t)		#query index, train index, distance
+	return matches
+
 #matchCountWeight is for how much to weigh the amount
 #of matches, 1 to only care about number of matches, 0 to only care about match
 #distance average (not implemented yet)
 #threshold is ...
-def compareTwoSIFT(des1, des2, threshold=0.8, matchCountWeight=0.5):
+def compareTwoSIFT(fd1, fd2, threshold=0.8, matchCountWeight=0.5):
+	#get descriptors without x, y, angle, scale
+	fd1 = np.array(fd1, dtype=np.float32)
+	fd2 = np.array(fd2, dtype=np.float32)
+	fd1 = fd1.reshape((int(len(fd1) / 132), 132))
+	fd1 = np.delete(fd1, np.s_[0:4], 1)
+	fd2 = np.delete(fd2, np.s_[0:4], 1)
+
 	# BFMatcher with default params
-	bf = cv2.BFMatcher()
-	matches = bf.knnMatch(des1,des2, k=2)
+	matches = getKeypointMatches(fd1, fd2, 2)
 
 	# Apply ratio test
 	good = []
 	for m,n in matches:
-		if m.distance < 0.8*n.distance:
-			good.append([m.distance])
+		if m[2] < 0.8*n[2]:
+			good.append([m[2]])
 
 	good = np.array(good)
 	distance = np.sqrt(np.square(good).sum()) #square them to punish extreme differences
@@ -98,6 +142,10 @@ def findNClosestHOG(fd, data, n):
 	difference = npData - fd
 	squared = np.square(difference)
 	summed = np.sum(squared, axis=1)
+	maxDistance = np.amax(summed)
+	print(maxDistance)
+	#normalize to 0 to 1 scale
+	summed = summed / maxDistance
 	print("looking for ", n, " closest images...");
 
 	#sorts the array, takes a bit to do
@@ -114,10 +162,9 @@ def findNClosestHOG(fd, data, n):
 	#get list of image names instead of indices
 	result = []
 	for i in ind:
-		result.append(data[i][0])
-		print(summed[i])
+		result.append((data[i][0], summed[i]))
 
-	return result
+	return result, summed
 
 
 def findNClosestSIFT(fd, data, fileNames, n):
@@ -128,7 +175,9 @@ def findNClosestSIFT(fd, data, fileNames, n):
 		distances.append(compareTwoSIFT(fd, fd2))
 
 	distances = np.array(distances)
-	print("looking for", n, "closest images...");
+	maxDistance = np.amax(distances)
+	#normalize to 0 to 1 scale
+	distances = distances / maxDistance
 
 	#sorts the array, takes a bit to do
 	ind = np.argpartition(distances, n+1)[:n+1]
@@ -144,9 +193,9 @@ def findNClosestSIFT(fd, data, fileNames, n):
 	#get list of image names instead of indices
 	result = []
 	for i in ind:
-		result.append(fileNames[i])
+		result.append((fileNames[i], distances[i]))
 
-	return result
+	return result, distances
 
 
 
